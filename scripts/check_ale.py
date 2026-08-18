@@ -33,16 +33,25 @@ def fetch_page():
         return resp.read().decode("utf-8", errors="ignore")
 
 
+def strip_tags(text):
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
 def extract_activities(html):
-    pattern = re.compile(r'([A-Z]{2,3}\d{2,4})[^<]{0,50}?</[^>]+>\s*<[^>]+>\s*([^<]{5,150})', re.MULTILINE)
+    # Estructura real de la pagina: <h3>CODIGO</h3><h2>Titulo</h2>
+    pattern = re.compile(r'<h3>\s*([A-Z]{2,3}\d{2,4})\s*</h3>\s*<h2>\s*(.*?)\s*</h2>', re.DOTALL)
     found = {}
-    for codigo, titulo in pattern.findall(html):
-        titulo = titulo.strip()
+    for codigo, titulo_html in pattern.findall(html):
+        titulo = strip_tags(titulo_html)
         if codigo not in found and titulo:
             found[codigo] = titulo
+
     if not found:
         for codigo in set(re.findall(r'\b([A-Z]{2,3}\d{2,4})\b', html)):
             found[codigo] = ""
+
     return found
 
 
