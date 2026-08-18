@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""
-Chequea la página de ALE/Optativas de Económicas UNICEN y notifica
+"""Chequea la pagina de ALE/Optativas de Economicas UNICEN y notifica
 (email + push via ntfy.sh) SOLO cuando aparece una actividad nueva.
-Guarda el estado (códigos ya vistos) en state/known_codes.json,
-que el workflow de GitHub Actions vuelve a commitear al repo.
-"""
+Guarda el estado (codigos ya vistos) en state/known_codes.json,
+que el workflow de GitHub Actions vuelve a commitear al repo."""
 
 import json
 import os
@@ -19,9 +17,14 @@ from pathlib import Path
 URL = "https://www.econ.unicen.edu.ar/alumnos/ale/ofertas-ale-y-optativas"
 STATE_FILE = Path(__file__).resolve().parent.parent / "state" / "known_codes.json"
 
-# Códigos publicados al momento de armar este watcher (17/08/2026).
-# Sirve como "semilla" para que la primera corrida no dispare avisos falsos.
 SEED_CODES = ["AD178", "AD179", "MO237", "TA232", "AE27", "CO256", "AD177", "AD176", "AD175", "CO255"]
+
+
+def env(name):
+    value = os.environ.get(name)
+    if value is None or value.strip() == "":
+        return None
+    return value
 
 
 def fetch_page():
@@ -31,25 +34,15 @@ def fetch_page():
 
 
 def extract_activities(html):
-    """Extrae pares (codigo, titulo) del HTML de la página."""
-    # Las tarjetas tienen un heading con el código (ej: "AD178") seguido
-    # muy cerca por el título de la actividad.
-    pattern = re.compile(
-        r'([A-Z]{2,3}\d{2,4})[^<]{0,50}?</[^>]+>\s*<[^>]+>\s*([^<]{5,150})',
-        re.MULTILINE,
-    )
+    pattern = re.compile(r'([A-Z]{2,3}\d{2,4})[^<]{0,50}?</[^>]+>\s*<[^>]+>\s*([^<]{5,150})', re.MULTILINE)
     found = {}
     for codigo, titulo in pattern.findall(html):
         titulo = titulo.strip()
         if codigo not in found and titulo:
             found[codigo] = titulo
-
-    # Fallback: si el patrón de arriba no matchea nada (cambió el HTML),
-    # al menos rescatamos los códigos sueltos para no perder la detección.
     if not found:
         for codigo in set(re.findall(r'\b([A-Z]{2,3}\d{2,4})\b', html)):
             found[codigo] = ""
-
     return found
 
 
@@ -65,17 +58,13 @@ def save_known(codes):
 
 
 def notify_ntfy(nuevos):
-    topic = os.environ.get("NTFY_TOPIC")
+    topic = env("NTFY_TOPIC")
     if not topic:
+        print("NTFY_TOPIC no configurado, salteo notificacion push.")
         return
     mensaje = "\n".join(f"{c} - {t}" for c, t in nuevos.items())
     data = mensaje.encode("utf-8")
-    req = urllib.request.Request(
-        f"https://ntfy.sh/{topic}",
-        data=data,
-        headers={"Title": "Nueva ALE/Optativa UNICEN".encode("utf-8"), "Priority": "4"},
-        method="POST",
-    )
+    req = urllib.request.Request(f"https://ntfy.sh/{topic}", data=data, headers={"Title": "Nueva ALE/Optativa UNICEN", "Priority": "4"}, method="POST")
     try:
         urllib.request.urlopen(req, timeout=15)
     except Exception as e:
@@ -83,35 +72,35 @@ def notify_ntfy(nuevos):
 
 
 def notify_email(nuevos):
-    host = os.environ.get("SMTP_HOST")
-    user = os.environ.get("SMTP_USER")
-    password = os.environ.get("SMTP_PASS")
-    to_addr = os.environ.get("EMAIL_TO")
-    port = int(os.environ.get("SMTP_PORT", "465"))
+    host = env("SMTP_HOST")
+    user = env("SMTP_USER")
+    password = env("SMTP_PASS")
+    to_addr = env("EMAIL_TO")
+    port_raw = env("SMTP_PORT")
+    port = int(port_raw) if port_raw else 465
     if not all([host, user, password, to_addr]):
+        print("Faltan credenciales de mail, salteo notificacion por email.")
         return
-
     cuerpo = "\n\n".join(f"{c} - {t}" for c, t in nuevos.items())
     cuerpo += f"\n\nVer todas: {URL}"
-
     msg = MIMEText(cuerpo, "plain", "utf-8")
     msg["Subject"] = "Nueva actividad ALE/Optativa publicada (UNICEN)"
     msg["From"] = user
     msg["To"] = to_addr
-
     context = ssl.create_default_context()
-    with smtplib.SMTP_SSL(host, port, context=context) as server:
-        server.login(user, password)
-        server.sendmail(user, [to_addr], msg.as_string())
+    try:
+        with smtplib.SMTP_SSL(host, port, context=context) as server:
+            server.login(user, password)
+            server.sendmail(user, [to_addr], msg.as_string())
+    except Exception as e:
+        print(f"Error enviando mail: {e}", file=sys.stderr)
 
 
 def main():
     html = fetch_page()
     actuales = extract_activities(html)
     conocidos = load_known()
-
     nuevos_codigos = [c for c in actuales if c not in conocidos]
-
     if nuevos_codigos:
         nuevos = {c: actuales[c] for c in nuevos_codigos}
         print(f"Novedades encontradas: {nuevos}")
@@ -119,7 +108,6 @@ def main():
         notify_email(nuevos)
     else:
         print("Sin novedades.")
-
     save_known(conocidos | set(actuales.keys()))
 
 
