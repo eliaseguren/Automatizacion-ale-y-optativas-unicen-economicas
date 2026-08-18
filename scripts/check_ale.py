@@ -19,6 +19,14 @@ STATE_FILE = Path(__file__).resolve().parent.parent / "state" / "known_codes.jso
 
 SEED_CODES = ["AD178", "AD179", "MO237", "TA232", "AE27", "CO256", "AD177", "AD176", "AD175", "CO255"]
 
+# El HTML de la pagina tiene el titulo ANIDADO dentro del <h3> (mal formado en origen):
+# <h3> CODIGO <h2>Titulo</h2> </h3>
+# En vez de <h3>CODIGO</h3><h2>Titulo</h2> como seria lo esperable.
+ACTIVITY_PATTERN = re.compile(
+    r'<h3[^>]*>\s*([A-Z]{2,3}\d{2,4})\s*<h2[^>]*>\s*(.*?)\s*</h2>',
+    re.DOTALL,
+)
+
 
 def env(name):
     value = os.environ.get(name)
@@ -40,18 +48,16 @@ def strip_tags(text):
 
 
 def extract_activities(html):
-    # Estructura real de la pagina: <h3>CODIGO</h3><h2>Titulo</h2>
-    pattern = re.compile(r'<h3>\s*([A-Z]{2,3}\d{2,4})\s*</h3>\s*<h2>\s*(.*?)\s*</h2>', re.DOTALL)
     found = {}
-    for codigo, titulo_html in pattern.findall(html):
+    for codigo, titulo_html in ACTIVITY_PATTERN.findall(html):
         titulo = strip_tags(titulo_html)
         if codigo not in found and titulo:
             found[codigo] = titulo
-
-    if not found:
-        for codigo in set(re.findall(r'\b([A-Z]{2,3}\d{2,4})\b', html)):
-            found[codigo] = ""
-
+    # OJO: a proposito NO hay fallback que busque el codigo suelto en toda
+    # la pagina. El HTML tiene comentarios ocultos con blobs base64 (ej. un
+    # watermark de Figma) que por azar pueden contener 4 letras/numeros que
+    # matchean el patron de codigo, generando falsos positivos (paso con
+    # "LU21"). Preferimos no reportar nada antes que inventar actividades.
     return found
 
 
@@ -71,7 +77,7 @@ def notify_ntfy(nuevos):
     if not topic:
         print("NTFY_TOPIC no configurado, salteo notificacion push.")
         return
-    mensaje = "\n".join(f"{c} - {t}" for c, t in nuevos.items())
+    mensaje = "\n\n".join(f"{c} - {t}" for c, t in nuevos.items())
     data = mensaje.encode("utf-8")
     req = urllib.request.Request(f"https://ntfy.sh/{topic}", data=data, headers={"Title": "Nueva ALE/Optativa UNICEN", "Priority": "4"}, method="POST")
     try:
@@ -108,6 +114,8 @@ def notify_email(nuevos):
 def main():
     html = fetch_page()
     actuales = extract_activities(html)
+    if not actuales:
+        print("ADVERTENCIA: no se detecto ninguna actividad. Puede que la pagina haya cambiado de estructura.", file=sys.stderr)
     conocidos = load_known()
     nuevos_codigos = [c for c in actuales if c not in conocidos]
     if nuevos_codigos:
