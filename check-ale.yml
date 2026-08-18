@@ -1,0 +1,42 @@
+name: Chequear ALE/Optativas UNICEN
+
+on:
+  schedule:
+    # Cada 10 minutos, 24/7. GitHub puede demorar la ejecución unos
+    # minutos en horarios de mucha carga, pero corre igual sin que
+    # tengas nada prendido de tu lado.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}  # permite disparar el chequeo a mano desde GitHub
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonar repo
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Ejecutar chequeo
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        run: python scripts/check_ale.py
+
+      - name: Guardar estado actualizado
+        run: |
+          git config user.name "ale-watcher-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state/known_codes.json
+          git diff --staged --quiet || git commit -m "Actualiza códigos conocidos [skip ci]"
+          git push
