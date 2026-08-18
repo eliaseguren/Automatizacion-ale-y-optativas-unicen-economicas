@@ -20,10 +20,10 @@ STATE_FILE = Path(__file__).resolve().parent.parent / "state" / "known_codes.jso
 SEED_CODES = ["AD178", "AD179", "MO237", "TA232", "AE27", "CO256", "AD177", "AD176", "AD175", "CO255"]
 
 # El HTML de la pagina tiene el titulo ANIDADO dentro del <h3> (mal formado en origen):
-# <h3> CODIGO <h2>Titulo</h2> </h3>
-# En vez de <h3>CODIGO</h3><h2>Titulo</h2> como seria lo esperable.
+# <h3> CODIGO <h2>Titulo</h2> <span class="badge ...">Oferta ALE|Materia Optativa</span> </h3>
 ACTIVITY_PATTERN = re.compile(
-    r'<h3[^>]*>\s*([A-Z]{2,3}\d{2,4})\s*<h2[^>]*>\s*(.*?)\s*</h2>',
+    r'<h3[^>]*>\s*([A-Z]{2,3}\d{2,4})\s*<h2[^>]*>\s*(.*?)\s*</h2>'
+    r'(?:\s*<span[^>]*class="[^"]*badge[^"]*"[^>]*>\s*(.*?)\s*</span>)?',
     re.DOTALL,
 )
 
@@ -49,10 +49,11 @@ def strip_tags(text):
 
 def extract_activities(html):
     found = {}
-    for codigo, titulo_html in ACTIVITY_PATTERN.findall(html):
+    for codigo, titulo_html, tipo_html in ACTIVITY_PATTERN.findall(html):
         titulo = strip_tags(titulo_html)
+        tipo = strip_tags(tipo_html)
         if codigo not in found and titulo:
-            found[codigo] = titulo
+            found[codigo] = {"titulo": titulo, "tipo": tipo}
     # OJO: a proposito NO hay fallback que busque el codigo suelto en toda
     # la pagina. El HTML tiene comentarios ocultos con blobs base64 (ej. un
     # watermark de Figma) que por azar pueden contener 4 letras/numeros que
@@ -72,12 +73,17 @@ def save_known(codes):
     STATE_FILE.write_text(json.dumps(sorted(codes), ensure_ascii=False, indent=2))
 
 
+def format_entry(codigo, info):
+    tipo = f" ({info['tipo']})" if info.get("tipo") else ""
+    return f"{codigo} - {info['titulo']}{tipo}"
+
+
 def notify_ntfy(nuevos):
     topic = env("NTFY_TOPIC")
     if not topic:
         print("NTFY_TOPIC no configurado, salteo notificacion push.")
         return
-    mensaje = "\n\n".join(f"{c} - {t}" for c, t in nuevos.items())
+    mensaje = "\n\n".join(format_entry(c, info) for c, info in nuevos.items())
     data = mensaje.encode("utf-8")
     req = urllib.request.Request(f"https://ntfy.sh/{topic}", data=data, headers={"Title": "Nueva ALE/Optativa UNICEN", "Priority": "4"}, method="POST")
     try:
@@ -96,7 +102,7 @@ def notify_email(nuevos):
     if not all([host, user, password, to_addr]):
         print("Faltan credenciales de mail, salteo notificacion por email.")
         return
-    cuerpo = "\n\n".join(f"{c} - {t}" for c, t in nuevos.items())
+    cuerpo = "\n\n".join(format_entry(c, info) for c, info in nuevos.items())
     cuerpo += f"\n\nVer todas: {URL}"
     msg = MIMEText(cuerpo, "plain", "utf-8")
     msg["Subject"] = "Nueva actividad ALE/Optativa publicada (UNICEN)"
